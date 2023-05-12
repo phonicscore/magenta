@@ -226,10 +226,8 @@ def get_estimator_spec(hparams, mode, features, labels, frame_logits,
             staircase=True),
         clip_gradients=hparams.clip_norm,
         summaries=[],
-        optimizer=
-        lambda lr: tf.tpu.CrossShardOptimizer(tf.train.AdamOptimizer(lr)))
-
-    return tf.tpu.estimator.TPUEstimatorSpec(
+        optimizer=lambda lr: tf.train.AdamOptimizer(lr))
+    return tf.estimator.tpu.TPUEstimatorSpec(
         mode=mode, loss=loss, train_op=train_op)
   elif mode == tf_estimator.ModeKeys.EVAL:
     metric_ops = {k: tf.metrics.mean(v) for k, v in metrics_values.items()}
