@@ -205,10 +205,10 @@ def get_estimator_spec(hparams, mode, features, labels, frame_logits,
           min_pitch=constants.MIN_MIDI_PITCH)
       velocity_values = tf.map_fn(map_values, velocity_values)
 
-    metrics_values = get_metrics(features, labels, frame_probs, onset_probs,
-                                 frame_predictions, onset_predictions,
-                                 offset_predictions, velocity_values, hparams)
-
+    # metrics_values = get_metrics(features, labels, frame_probs, onset_probs,
+    #                              frame_predictions, onset_predictions,
+    #                              offset_predictions, velocity_values, hparams)
+    metrics_values = {}
     for label, loss_collection in loss_metrics.items():
       loss_label = 'losses/' + label
       metrics_values[loss_label] = loss_collection
@@ -235,37 +235,37 @@ def get_estimator_spec(hparams, mode, features, labels, frame_logits,
         mode=mode, loss=loss, eval_metric_ops=metric_ops)
   elif mode == tf_estimator.ModeKeys.PREDICT:
     predictions = {
-        'frame_probs':
-            frame_probs,
+        # 'frame_probs':
+        #     frame_probs,
         'onset_probs':
             onset_probs,
-        'frame_predictions':
-            frame_predictions,
+        # 'frame_predictions':
+        #     frame_predictions,
         'onset_predictions':
             onset_predictions,
-        'offset_predictions':
-            offset_predictions,
+        # 'offset_predictions':
+        #     offset_predictions,
         'velocity_values':
             velocity_values,
-        'sequence_predictions':
-            _predict_sequences(
-                frame_probs=frame_probs,
-                onset_probs=onset_probs,
-                frame_predictions=frame_predictions,
-                onset_predictions=onset_predictions,
-                offset_predictions=offset_predictions,
-                velocity_values=velocity_values,
-                hparams=hparams),
+        # 'sequence_predictions':
+        #     _predict_sequences(
+        #         frame_probs=frame_probs,
+        #         onset_probs=onset_probs,
+        #         frame_predictions=frame_predictions,
+        #         onset_predictions=onset_predictions,
+        #         offset_predictions=offset_predictions,
+        #         velocity_values=velocity_values,
+        #         hparams=hparams),
         # Include some features and labels in output because Estimator 'predict'
         # API does not give access to them.
-        'sequence_ids':
-            features.sequence_id,
-        'sequence_labels':
-            labels.note_sequence,
-        'frame_labels':
-            labels.labels,
-        'onset_labels':
-            labels.onsets,
+        # 'sequence_ids':
+        #     features.sequence_id,
+        # 'sequence_labels':
+        #     labels.note_sequence,
+        # 'frame_labels':
+        #     labels.labels,
+        # 'onset_labels':
+        #     labels.onsets,
     }
     for k, v in metrics_values.items():
       predictions[k] = tf.stack(v)
