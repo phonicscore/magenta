@@ -137,7 +137,7 @@ def _predict_sequences(frame_probs, onset_probs, frame_predictions,
 
 def get_estimator_spec(hparams, mode, features, labels, frame_logits,
                        onset_logits, offset_logits, velocity_values,
-                       offset_network=True):
+                       offset_network=True, include_metrics=True, debug=False):
   """Create TPUEstimatorSpec."""
   loss_metrics = {}
   loss = None
@@ -205,13 +205,14 @@ def get_estimator_spec(hparams, mode, features, labels, frame_logits,
           min_pitch=constants.MIN_MIDI_PITCH)
       velocity_values = tf.map_fn(map_values, velocity_values)
 
-    metrics_values = get_metrics(features, labels, frame_probs, onset_probs,
-                                 frame_predictions, onset_predictions,
-                                 offset_predictions, velocity_values, hparams)
+    if include_metrics:
+      metrics_values = get_metrics(features, labels, frame_probs, onset_probs,
+                                   frame_predictions, onset_predictions,
+                                   offset_predictions, velocity_values, hparams)
 
-    for label, loss_collection in loss_metrics.items():
-      loss_label = 'losses/' + label
-      metrics_values[loss_label] = loss_collection
+      for label, loss_collection in loss_metrics.items():
+        loss_label = 'losses/' + label
+        metrics_values[loss_label] = loss_collection
 
   if mode == tf_estimator.ModeKeys.TRAIN:
     train_op = tf_slim.optimize_loss(
@@ -237,40 +238,39 @@ def get_estimator_spec(hparams, mode, features, labels, frame_logits,
         mode=mode, loss=loss, eval_metric_ops=metric_ops)
   elif mode == tf_estimator.ModeKeys.PREDICT:
     predictions = {
-        'frame_probs':
-            frame_probs,
-        'onset_probs':
-            onset_probs,
-        'frame_predictions':
-            frame_predictions,
-        'onset_predictions':
-            onset_predictions,
-        'offset_predictions':
-            offset_predictions,
-        'velocity_values':
-            velocity_values,
-        'sequence_predictions':
-            _predict_sequences(
-                frame_probs=frame_probs,
-                onset_probs=onset_probs,
-                frame_predictions=frame_predictions,
-                onset_predictions=onset_predictions,
-                offset_predictions=offset_predictions,
-                velocity_values=velocity_values,
-                hparams=hparams),
-        # Include some features and labels in output because Estimator 'predict'
-        # API does not give access to them.
-        'sequence_ids':
-            features.sequence_id,
-        'sequence_labels':
-            labels.note_sequence,
-        'frame_labels':
-            labels.labels,
-        'onset_labels':
-            labels.onsets,
+      'onset_probs':
+        onset_probs,
+      'onset_predictions':
+        onset_predictions,
+      'velocity_values':
+        velocity_values,
+      # 'spec':
+      #   features.spec,  # for debug input mel with tflite
     }
-    for k, v in metrics_values.items():
-      predictions[k] = tf.stack(v)
+    if debug:
+        predictions['spec'] = features.spec
+    if not hparams.drums_only:
+        predictions['frame_probs'] = frame_probs
+        predictions['frame_predictions'] = frame_predictions
+        predictions['offset_predictions'] = offset_predictions
+
+    if include_metrics:
+      predictions['sequence_predictions'] = \
+        _predict_sequences(
+          frame_probs=frame_probs,
+          onset_probs=onset_probs,
+          frame_predictions=frame_predictions,
+          onset_predictions=onset_predictions,
+          offset_predictions=offset_predictions,
+          velocity_values=velocity_values,
+          hparams=hparams
+        )
+      predictions['sequence_ids'] = features.sequence_id
+      predictions['sequence_labels'] = labels.note_sequence
+      predictions['frame_labels'] = labels.labels
+      predictions['onset_labels'] = labels.onsets
+      for k, v in metrics_values.items():
+        predictions[k] = tf.stack(v)
 
     return tf_estimator.EstimatorSpec(mode=mode, predictions=predictions)
   else:

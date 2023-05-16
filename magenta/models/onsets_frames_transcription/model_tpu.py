@@ -313,7 +313,7 @@ def build_model(spec, length, hparams, is_training):
   return frame_logits, onset_logits, offset_logits, velocity_values
 
 
-def model_fn(features, labels, mode, params, config):
+def model_fn(features, labels, mode, params, config, include_metrics=True):
   """Builds the acoustic (for Estimator API)."""
   del config
   hparams = params
@@ -330,12 +330,12 @@ def model_fn(features, labels, mode, params, config):
     shape = list(output.shape)
     shape[0] = spec.shape[0]
     output.set_shape(shape)
-  for output in (frame_logits, onset_logits, offset_logits, velocity_values):
+  for output in (onset_logits, velocity_values):
     fix_shape(output)
 
   return estimator_spec_util.get_estimator_spec(
       hparams, mode, features, labels, frame_logits, onset_logits,
-      offset_logits, velocity_values, offset_network=hparams.offset_network)
+      offset_logits, velocity_values, offset_network=hparams.offset_network, include_metrics=include_metrics)
 
 
 def get_default_hparams():

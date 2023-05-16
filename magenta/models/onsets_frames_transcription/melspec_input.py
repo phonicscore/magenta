@@ -39,15 +39,22 @@ import numpy as np
 import tensorflow.compat.v1 as tf
 
 
+def fixed_hann_window(win_len, dtype):
+    fac2 = np.linspace(-np.pi, np.pi, 2048 + 1)[:-1]
+    hann = 0.5 + 0.5 * np.cos(fac2)
+    return tf.constant(hann, dtype=dtype)
+
+
 def _stft_magnitude_full_tf(waveform_input, window_length_samples,
-                            hop_length_samples, fft_length):
+                            hop_length_samples, fft_length, window_fn=tf.signal.hann_window):
   """Calculate STFT magnitude (spectrogram) using tf.signal ops."""
   stft_magnitude = tf.abs(
       tf.signal.stft(
           waveform_input,
           frame_length=window_length_samples,
           frame_step=hop_length_samples,
-          fft_length=fft_length),
+          fft_length=fft_length,
+          window_fn=window_fn),
       name='magnitude_spectrogram')
   return stft_magnitude
 
@@ -190,11 +197,18 @@ def _stft_tflite(signal, frame_length, frame_step, fft_length):
   """
   # Make the window be shape (1, frame_length) instead of just frame_length
   # in an effort to help the tflite broadcast logic.
-  window = tf.reshape(
+  # window = tf.reshape(
+  #     tf.constant(
+  #         (0.5 - 0.5 * np.cos(2 * np.pi * np.arange(0, 1.0, 1.0 / frame_length))
+  #         ).astype(np.float32),
+  #         name='window'), [1, frame_length])
+
+  window = tf.reshape(  # RV: this is numerically closer to the scipy implementation used by librosa
       tf.constant(
-          (0.5 - 0.5 * np.cos(2 * np.pi * np.arange(0, 1.0, 1.0 / frame_length))
+          (0.5 + 0.5 * np.cos(np.linspace(-np.pi, np.pi, frame_length + 1)[:-1])
           ).astype(np.float32),
           name='window'), [1, frame_length])
+
   framed_signal = _fixed_frame(
       signal, frame_length, frame_step, first_axis=False)
   framed_signal *= window
@@ -225,7 +239,7 @@ def build_mel_calculation_graph(waveform_input,
                                 upper_edge_hz=7500.0,
                                 frame_width=96,
                                 frame_hop=10,
-                                tflite_compatible=False):
+                                tflite_compatible=False, debug_output=False, pad=True, top_db=80.0, int16ds=False):
   """Build a TF graph to go from waveform to mel spectrum patches.
 
   Args:
@@ -253,36 +267,72 @@ def build_mel_calculation_graph(waveform_input,
   hop_length_samples = int(round(hop_length_seconds * sample_rate))
   fft_length = 2**int(
       math.ceil(math.log(window_length_samples) / math.log(2.0)))
+  if pad:  # added RV
+      if len(waveform_input.shape) == 2:
+          pad_lens = [[0, 0], [int(fft_length/2), int(fft_length/2)]]
+      else:
+          pad_lens = [[int(fft_length / 2), int(fft_length / 2)]]
+
+      waveform_input = tf.pad(waveform_input, tf.constant(pad_lens),
+                              mode='REFLECT', constant_values=0, name='input_padding')
+  if int16ds: #ADDED RV: this is to emulate the preprocessing of the audio binary data
+      # normalize
+      waveform_input = tf.math.divide(waveform_input, tf.math.reduce_max(tf.math.abs(waveform_input)), name='normalized_audio')
+      # weird f32->i16->f32 casts
+      waveform_input = tf.cast(waveform_input * np.iinfo(np.int16).max, dtype=tf.int16)
+      waveform_input = tf.math.divide(tf.cast(waveform_input, dtype=tf.float32), np.iinfo(np.int16).max, name='f32-i16-f32_casts_audio')
+
   if tflite_compatible:
     magnitude_spectrogram = _stft_magnitude_tflite(
         waveform_input, window_length_samples, hop_length_samples, fft_length)
   else:
     magnitude_spectrogram = _stft_magnitude_full_tf(
-        waveform_input, window_length_samples, hop_length_samples, fft_length)
+        waveform_input, window_length_samples, hop_length_samples, fft_length, fixed_hann_window)
 
   # Warp the linear-scale, magnitude spectrograms into the mel-scale.
   num_spectrogram_bins = int(magnitude_spectrogram.shape[-1])
-  if tflite_compatible:
-    linear_to_mel_weight_matrix = tf.constant(
-        mfcc_mel.SpectrogramToMelMatrix(num_mel_bins, num_spectrogram_bins,
-                                        sample_rate, lower_edge_hz,
-                                        upper_edge_hz).astype(np.float32),
-        name='linear_to_mel_matrix')
-  else:
-    # In full tf, the mel weight matrix is calculated at run time within the
-    # TF graph.  This avoids including a matrix of 64 x 256 float values (i.e.,
-    # 100 kB or more, depending on the representation) in the exported graph.
-    linear_to_mel_weight_matrix = tf.signal.linear_to_mel_weight_matrix(
-        num_mel_bins, num_spectrogram_bins, sample_rate, lower_edge_hz,
-        upper_edge_hz)
 
+  # if tflite_compatible:
+  #   linear_to_mel_weight_matrix = tf.constant(
+  #       mfcc_mel.SpectrogramToMelMatrix(num_mel_bins, num_spectrogram_bins,
+  #                                       sample_rate, lower_edge_hz,
+  #                                       upper_edge_hz).astype(np.float32),
+  #       name='linear_to_mel_matrix')
+  # else:
+  #   # In full tf, the mel weight matrix is calculated at run time within the
+  #   # TF graph.  This avoids including a matrix of 64 x 256 float values (i.e.,
+  #   # 100 kB or more, depending on the representation) in the exported graph.
+  #   linear_to_mel_weight_matrix = tf.signal.linear_to_mel_weight_matrix(
+  #       num_mel_bins, num_spectrogram_bins, sample_rate, lower_edge_hz,
+  #       upper_edge_hz)
+
+  # changed RV: use librosa mel matrix!!
+  import librosa   # added RV
+  # 44100, 2048, 250, 30, True
+  linear_to_mel_weight_matrix = tf.constant(librosa.feature.spectral.filters.mel(sample_rate, fft_length,
+                                              n_mels=num_mel_bins, fmin=lower_edge_hz, htk=True).astype(np.float32).T,
+                                              name='linear_to_mel_matrix')
+
+  power_spec = tf.math.square(magnitude_spectrogram)  # added RV
   mel_spectrogram = tf.matmul(
-      magnitude_spectrogram,
+      # magnitude_spectrogram,
+      power_spec,  # changed RV, power spec for librosa melspec comp. orig
       linear_to_mel_weight_matrix,
       name='mel_spectrogram')
-  log_offset = 0.001
-  log_mel_spectrogram = tf.log(
-      mel_spectrogram + log_offset, name='log_mel_spectrogram')
+  # log_offset = 0.001
+  # log_mel_spectrogram = tf.log(
+  #     mel_spectrogram + log_offset, name='log_mel_spectrogram')
+
+  # changed RV, log10 and max as numeric save to make compatible with librosa
+  amin = 1e-10
+  log_mel_spectrogram = tf.log(tf.math.maximum(mel_spectrogram, amin), name='log_mel_spectrogram')
+  denominator = tf.log(tf.constant(10, dtype=log_mel_spectrogram.dtype))  # log10 !!
+  log_mel_spectrogram = 10.0 * log_mel_spectrogram / denominator  # db calc (to make equal to librosa used in non tflite function)
+
+  if top_db is not None and top_db > 0.0:
+      top_db_tf = tf.constant(top_db, dtype=tf.float32)    # added RV  -- limit db range like in librosa!
+      log_mel_spectrogram = tf.math.maximum(log_mel_spectrogram, tf.math.reduce_max(log_mel_spectrogram) - top_db_tf)
+
   # log_mel_spectrogram is a [?, num_mel_bins] gram.
   if tflite_compatible:
     features = _fixed_frame(
@@ -297,4 +347,7 @@ def build_mel_calculation_graph(waveform_input,
         frame_step=frame_hop,
         axis=0)
   # features is [num_patches, frame_width, num_mel_bins].
-  return features
+  if debug_output:
+    return features, linear_to_mel_weight_matrix, power_spec
+  else:
+    return features
