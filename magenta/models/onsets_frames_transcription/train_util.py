@@ -63,7 +63,7 @@ def create_estimator(model_fn,
                      master='',
                      tpu_cluster=None,
                      save_checkpoint_steps=300,
-                     save_summary_steps=300,
+                     save_summary_steps=10,
                      keep_checkpoint_max=None,
                      warm_start_from=None):
   """Creates an estimator."""

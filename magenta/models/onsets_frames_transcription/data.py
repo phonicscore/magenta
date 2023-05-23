@@ -729,19 +729,42 @@ def provide_batch(examples,
 
   input_dataset = read_examples(
       examples, is_training, shuffle_examples, skip_n_initial_records, hparams)
-
   if preprocess_examples:
     input_map_fn = functools.partial(
         preprocess_example, hparams=hparams, is_training=is_training)
   else:
     input_map_fn = parse_preprocessed_example
   input_tensors = input_dataset.map(input_map_fn)
-
   model_input = input_tensors.map(
       functools.partial(
           input_tensors_to_model_input,
           hparams=hparams, is_training=is_training))
-
   model_input = splice_examples(model_input, hparams, is_training)
-  dataset = create_batch(model_input, hparams=hparams, is_training=is_training)
+  dataset_1 = create_batch(model_input, hparams=hparams, is_training=is_training)
+
+  # ---------------------------------------------------------------
+
+  extra_examples = "/home/richhiey/projects/data/datasets/egmd_acoustic_rock/train.tfrecord-00000-of-00001"
+  extra_dataset = read_examples(
+      extra_examples, is_training, shuffle_examples, skip_n_initial_records, hparams)
+  if preprocess_examples:
+    input_map_fn = functools.partial(
+        preprocess_example, hparams=hparams, is_training=is_training)
+  else:
+    input_map_fn = parse_preprocessed_example
+  input_tensors = extra_dataset.map(input_map_fn)
+  model_input = input_tensors.map(
+      functools.partial(
+          input_tensors_to_model_input,
+          hparams=hparams, is_training=is_training))
+  model_input = splice_examples(model_input, hparams, is_training)
+  dataset_2 = create_batch(model_input, hparams=hparams, is_training=is_training)
+  
+  # ---------------------------------------------------------------
+  
+  dataset = tf.data.Dataset.sample_from_datasets(
+    [dataset_1, dataset_2],
+    weights=[0.7, 0.3],
+    stop_on_empty_dataset=True,
+  )
   return dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
